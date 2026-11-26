@@ -2,9 +2,55 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"github.com/yetone/magpie/internal/provider"
 )
+
+func TestCodexWorkspaceHelperUsesOfficialWindowsPackage(t *testing.T) {
+	const official = "OpenAI.Codex_26.1120.6357.0_x64__2p2nqsd0c76g0"
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "app", "resources", "codex.exe")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldList, oldRoot := windowsStorePackages, codexWindowsPackageRoot
+	t.Cleanup(func() { windowsStorePackages, codexWindowsPackageRoot = oldList, oldRoot })
+	windowsStorePackages = func() []string {
+		return []string{"OpenAI.Codex_99.0.0.0_x64__wrong-publisher", official}
+	}
+	codexWindowsPackageRoot = func(pkg string) string {
+		if pkg != official {
+			t.Fatalf("read the package root for %q", pkg)
+		}
+		return dir
+	}
+	if got := provider.CodexWorkspaceAppExecutable(); got != bin {
+		t.Fatalf("workspace helper = %q, want %q", got, bin)
+	}
+}
+
+func TestCodexDesktopUsesPortableProfile(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Setenv("CODEX_SQLITE_HOME", t.TempDir())
+	dir := t.TempDir()
+	home := filepath.Join(dir, "data", "codex")
+	exe := filepath.Join(dir, "app", "ChatGPT.exe")
+	cmd := codexAppProfileCommand(exe, home)
+	if !slices.Equal(cmd.Args, []string{exe, "--user-data-dir=" + filepath.Join(dir, "data", "codex-desktop")}) {
+		t.Fatalf("desktop command = %q", cmd.Args)
+	}
+	env := cmd.Environ()
+	if !slices.Contains(env, "CODEX_HOME="+home) || !slices.Contains(env, "CODEX_SQLITE_HOME="+home) {
+		t.Fatal("desktop command did not set its Codex and SQLite homes")
+	}
+}
 
 // Open the Codex app (Yink88564391 on X): on a Mac it opens the bundle
 // whose Info.plist says com.openai.codex, never the ChatGPT chat app's

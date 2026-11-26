@@ -86,8 +86,9 @@ type SignInState struct {
 	Using      bool   `json:"using,omitempty"` // the agent was signed in to it too
 	// Again is an account listed already: its sign-in was renewed rather
 	// than a new account added (#413)
-	Again bool   `json:"again,omitempty"`
-	Error string `json:"error,omitempty"`
+	Again      bool             `json:"again,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Workspaces []CodexWorkspace `json:"workspaces,omitempty"`
 	// CallbackBlocked says why the port the browser is sent back to
 	// couldn't be opened: "reserved" (Windows keeps it for Hyper-V, WSL or
 	// Docker) or "busy" (another program has it). The sign-in goes on
@@ -141,7 +142,9 @@ type signInFlow struct {
 	proxy  string
 	chosen bool
 	// user is the account signed in to again, "" for a new one
-	user string
+	user               string
+	discoverWorkspaces bool
+	workspaceLogin     savedLogin
 }
 
 // SignInOptions are a sign-in's choices beyond its subscription.
@@ -153,7 +156,8 @@ type SignInOptions struct {
 	// account's own once the sign-in is done.
 	Proxy *string
 	// User is the account signed in to again, for the proxy it goes through
-	User string
+	User               string
+	DiscoverWorkspaces bool // offer workspace selection after a new Codex browser sign-in
 }
 
 // via is ctx for the sign-in's requests: through its proxy, so the vendor
@@ -254,7 +258,13 @@ func StartSignInWith(agent string, o SignInOptions) (SignInState, error) {
 	if PluginServes(agent) {
 		return SignInState{}, fmt.Errorf("%s runs on its plugin: sign in through the plugin (magpie plugin login %s)", agent, agent)
 	}
-	s := &signInFlow{verifier: randomToken(48), state: randomToken(24), done: make(chan struct{}), site: site}
+	if agent == "codex" && o.User == "" && o.DiscoverWorkspaces {
+		if st, ok := CodexWorkspaceImport(); ok {
+			return st, nil
+		}
+	}
+	s := &signInFlow{verifier: randomToken(48), state: randomToken(24), done: make(chan struct{}), site: site,
+		discoverWorkspaces: agent == "codex" && o.User == "" && o.DiscoverWorkspaces}
 	if err := s.pickProxy(agent, o); err != nil {
 		return SignInState{}, err
 	}
@@ -276,7 +286,7 @@ func StartSignInWith(agent string, o SignInOptions) (SignInState, error) {
 		select {
 		case <-s.done:
 		case <-time.After(timeout):
-			s.finish(SignInState{State: "failed", Error: "the sign-in timed out; start it again"})
+			s.finish(SignInState{State: "browser_timeout"})
 		}
 	}()
 
@@ -552,6 +562,9 @@ func (s *signInFlow) pastedCallback(raw string) error {
 		}
 		return errors.New("that address didn't finish the sign-in; start it again")
 	}
+	if st := s.status(); s.discoverWorkspaces && (st.State == "waiting" || st.State == "workspaces" || st.State == "importing_workspaces") {
+		return nil
+	}
 	select {
 	case <-s.done:
 	case <-ctx.Done():
@@ -640,17 +653,25 @@ func (s *signInFlow) status() SignInState {
 // window, seeing it done, finds the account listed.
 func (s *signInFlow) finish(out SignInState) bool {
 	s.mu.Lock()
-	if s.finished || s.kept && out.State == "canceled" {
+	if out.State == "browser_timeout" {
+		if workspaceImportState(s.st.State) {
+			s.mu.Unlock()
+			return false
+		}
+		out = SignInState{State: "failed", Error: "the sign-in timed out; start it again"}
+	}
+	if s.finished || s.kept && out.State != "done" {
 		s.mu.Unlock()
 		return false
 	}
 	s.finished = true
+	s.workspaceLogin = savedLogin{}
 	if out.State == "done" {
 		agent, proxy, chosen := s.st.Agent, s.proxy, s.chosen
 		s.mu.Unlock()
 		// signing in again brings back an account removed from magpie
 		_ = ShowAccount(agent)
-		if chosen {
+		if chosen && out.User != "" {
 			// the proxy picked for it is the account's from now on
 			if err := keepSignInProxy(agent, out.User, proxy); err != nil {
 				out.Error = "signed in, but its proxy wasn't kept: " + err.Error()
@@ -730,6 +751,11 @@ func (s *signInFlow) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	l, err := s.exchange(ctx, q.Get("code"))
 	if err == nil {
+		if _, workspace := codexWho(l.Auth); s.discoverWorkspaces && workspace != "" {
+			s.offerCodexWorkspaces(ctx, l)
+			signInPage(w, true, "You're signed in", "Return to magpie to add your Codex workspaces.")
+			return
+		}
 		var using bool
 		if err = keepLogin(ctx, func() (err error) { using, err = addLoginNamed(&l); return err }); err == nil {
 			s.finish(SignInState{State: "done", User: l.User, Plan: l.Plan, Using: using})

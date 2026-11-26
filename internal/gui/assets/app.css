@@ -3596,6 +3596,18 @@ body.window .ag-sk-icon { width: 22px; height: 22px; border-radius: 6px; }
 .signing.import .res.added .st, .signing.import .res.updated .st { color: var(--green); }
 .signing.import .res.failed .st { color: var(--red); }
 .signing.import .res .why { flex-basis: 100%; font-size: 11.5px; overflow-wrap: anywhere; }
+.signing.workspace-import { animation: none; scroll-margin-block: 48px 12px; }
+.workspace-import form { display: grid; gap: 6px; }
+.workspace-choices { display: grid; gap: 4px; max-height: min(14rem, 28vh); overflow: auto; }
+.workspace-choice { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; }
+.workspace-choice .why { flex-basis: 100%; }
+.workspace-progress { display: grid; gap: 4px; }
+.workspace-progress:empty { display: none; }
+.workspace-progress progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.account-number { flex: none; min-width: 2ch; color: var(--muted); text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+.workspace-import label { display: flex; align-items: baseline; gap: 5px; }
+.workspace-import label input { flex: none; }
+.workspace-import .acts { justify-content: flex-end; margin: 0; }
 .signing .spinner { width: 16px; height: 16px; flex: none; margin-top: 1px; border-radius: 50%; border: 1.75px solid var(--line); border-top-color: var(--fg); animation: spin .8s linear infinite; }
 .signing .mark { width: 16px; height: 16px; flex: none; margin-top: 1px; border-radius: 50%; display: grid; place-items: center; background: var(--fg); color: var(--card); font-size: 11px; font-weight: 700; }
 .fallback { display: grid; gap: 6px; }

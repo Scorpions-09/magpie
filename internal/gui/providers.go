@@ -3769,7 +3769,9 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 			fail(rw, err)
 			return
 		}
-		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{Site: in.Site, Proxy: in.Proxy, User: in.User})
+		st, err := provider.StartSignInWith(in.Agent, provider.SignInOptions{
+			Site: in.Site, Proxy: in.Proxy, User: in.User, DiscoverWorkspaces: !in.LinkOnly,
+		})
 		if err != nil {
 			fail(rw, err)
 			return
@@ -3786,9 +3788,28 @@ func providerRoutes(mux *http.ServeMux, w Windows) {
 		}
 		writeJSON(rw, st)
 	})
+	mux.HandleFunc("GET /api/signin/workspaces", func(rw http.ResponseWriter, r *http.Request) {
+		if st, ok := provider.CodexWorkspaceImport(); ok {
+			writeJSON(rw, st)
+		} else {
+			rw.WriteHeader(http.StatusNoContent)
+		}
+	})
 	mux.HandleFunc("POST /api/signin/{id}/cancel", func(rw http.ResponseWriter, r *http.Request) {
 		provider.CancelSignIn(r.PathValue("id"))
 		rw.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("POST /api/signin/{id}/workspaces", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ AccountIDs []string }
+		if err := json.NewDecoder(io.LimitReader(r.Body, 32<<10)).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.ImportCodexWorkspaces(r.PathValue("id"), in.AccountIDs); err != nil {
+			fail(rw, err)
+			return
+		}
+		rw.WriteHeader(http.StatusAccepted)
 	})
 	mux.HandleFunc("POST /api/signin/{id}/callback", func(rw http.ResponseWriter, r *http.Request) {
 		var in struct{ URL string }

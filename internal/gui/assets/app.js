@@ -6129,7 +6129,7 @@ async function loadProvidersNow() {
     backAfterLoad($("#view-" + view));
   // under Routing: drawn when opened (#4652)
   } else if (rtView(view)) { providersBehind = true; markNewPartners(); }
-  else renderProviders();
+  else { renderProviders(); if (view === "providers") resumeWorkspaceImport(); }
   renderArchive();
   providersWhileFetching();
   if (view === "providers") loadUpstream();
@@ -12887,7 +12887,20 @@ function importSay(agent) {
 let signing = null;
 // stopSignIn tells the server the sign-in under way is given up
 const stopSignIn = () => { if (signing?.id) api("signin/" + signing.id + "/cancel", {}).catch(() => {}); };
-const signingOpen = () => signing?.state === "waiting" || signing?.state === "installing";
+const signingWaiting = (st) => ["waiting", "installing", "workspaces", "importing_workspaces"].includes(st);
+const signingOpen = () => signingWaiting(signing?.state);
+const workspacePicker = () => signing?.state?.endsWith("workspaces");
+function resumeWorkspaceImport() {
+  if (signing || editing) return;
+  api("signin/workspaces").then((st) => {
+    if (!st?.id || view !== "providers" || signing || editing) return;
+    signing = st;
+    editing = providers.providers.find((p) => p.account?.agent === "codex")?.id ?? null;
+    adding = !editing;
+    renderProviders();
+    followSignIn(st.id);
+  }).catch(() => {});
+}
 let justAdded = ""; // the account that just came in, to greet it
 const accountToolsOpen = new Set(); // rows whose ⋯ is open
 
@@ -12895,7 +12908,7 @@ const accountToolsOpen = new Set(); // rows whose ⋯ is open
 const hasLogins = (agent) => providers?.providers?.some((p) => p.account?.agent === agent && p.account.logins?.length);
 
 async function startSignIn(agent, risky, site, o = {}) {
-  if (signingOpen()) api("signin/" + signing.id + "/cancel", {}).catch(() => {});
+  if (signingOpen() && !workspacePicker()) stopSignIn();
   if (signing?.behind) api("signin/" + signing.behind + "/cancel", {}).catch(() => {});
   if (subOf(agent)?.risk && !risky && !o.user && !hasLogins(agent)) {
     signing = { agent, state: "risk", forUser: o.user, picked: o.proxy };
@@ -12954,12 +12967,15 @@ async function followSignIn(id) {
     let st;
     try { st = await api("signin/" + id); } catch { continue; }
     if (signing?.id !== id) continue;
-    if (st.state === "waiting" || st.state === "installing") {
+    if (signingWaiting(st.state)) {
       // the CLI it needed is in: now the vendor's page can open
       if (signing.state === "installing" && st.state === "waiting" && st.url && !st.opened && !signing.linkOnly) {
         signInPage(st.url, id);
       }
-      if (signing.state !== st.state || signing.url !== st.url || signing.code !== st.code) { signing = { ...st, ...signingKept() }; renderProviders(); }
+      if (signing.state !== st.state || signing.url !== st.url || signing.code !== st.code || st.workspaces && JSON.stringify(signing.workspaces) !== JSON.stringify(st.workspaces)) {
+        signing = { ...st, ...signingKept() };
+        renderProviders();
+      }
       continue;
     }
     if (st.state === "done") return signedIn(st);
@@ -12971,7 +12987,8 @@ async function followSignIn(id) {
 
 // signingKept: a sign-in's site, way, account and proxy across updates
 function signingKept() {
-  return { site: signing.site, method: signing.method, inputs: signing.inputs, forUser: signing.forUser, picked: signing.picked, askProxy: signing.askProxy, customProxy: signing.customProxy, openError: signing.openError, linkOnly: signing.linkOnly };
+  const { site, method, inputs, forUser, picked, askProxy, customProxy, openError, linkOnly, workspaceShown, workspaceScroll } = signing;
+  return { site, method, inputs, forUser, picked, askProxy, customProxy, openError, linkOnly, workspaceShown, workspaceScroll };
 }
 
 // signInProxyOf: the proxy an account's sign-in goes through when none is
@@ -12996,6 +13013,7 @@ async function signedIn(st) {
   // signed in but listed nowhere (#155): say so rather than "added"
   if (!p) status(t("{user} signed in, but magpie can't list it — please report this", { user: who }), "err");
   // an account listed already is said to be, not added (#413)
+  else if (st.workspaces) status(t("Codex workspaces are ready"), "ok");
   else if (st.again) status(t("{user} is already listed — its sign-in was renewed", { user: who }), "ok");
   else if (st.token) status(t("{user} added; requests through magpie use it beside your other accounts", { user: who }), "ok");
   else status(st.using ? t("Signed in as {user}", { user: who }) : t("{user} added — switch to it any time", { user: who }), "ok");
@@ -13360,7 +13378,7 @@ const startExport = (agent) => signAsk({ agent, state: "export", format: "sub2ap
 // import being read finishes.
 function dropSigningIn(id) {
   const p = typeof id === "string" && providers?.providers?.find((x) => x.id === id);
-  if (!p?.account || !signing || signing.agent !== p.account.agent || signing.state === "importing") return;
+  if (!p?.account || !signing || signing.agent !== p.account.agent || signing.state === "importing" || workspacePicker()) return;
   if (signing.id) api("signin/" + signing.id + "/cancel", {}).catch(() => {});
   signing = null;
 }
@@ -13376,6 +13394,13 @@ function codexWay(sub, device, o) {
   return b;
 }
 function renderSigning(sub) {
+  if (workspacePicker()) {
+    const flow = signing, box = el("div", "signing import workspace-import");
+    import("./accountimport.js").then(({ drawWorkspaces }) => {
+      if (signing === flow) drawWorkspaces(box, flow, { el, t, api, cancel: cancelSignIn });
+    }, statusErr);
+    return box;
+  }
   const box = el("div", "signing" + (signing.state === "failed" ? " failed" : ""));
   const tt = el("span", "tt");
   if (signing.state === "risk") {
@@ -13435,7 +13460,7 @@ function renderSigning(sub) {
   if (signing.state === "ghe") return window.copilotGHESheet();
   if (signing.state === "token") return window.claudeTokenSheet();
   if (signing.state === "export") return window.accountExportSheet(sub);
-  if (signing.state === "import" || signing.state === "importing" || signing.state === "imported") return renderLoginImport(sub);
+  if (["import", "importing", "imported"].includes(signing.state)) return renderLoginImport(sub);
   if (signing.state === "method" || signing.state === "prompt" || signing.state === "key") return renderPluginAsk(sub);
   if (signing.state === "failed") {
     box.append(el("span", "mark", "!"));
@@ -13779,7 +13804,7 @@ function renderAccounts(a, p) {
   const back = ls.find((l) => l.returns && !l.active);
   // the setup-token Claude Code itself uses over its sign-in
   const tokenUsed = ls.find((l) => l.uses);
-  for (const l of ls) {
+  for (const [index, l] of ls.entries()) {
     const on = isOn(l);
     const row = el("div", "acc" + (on ? " in-use" : " off") + (l.user === justAdded ? " new" : ""));
     // Use that switches Claude Code itself
@@ -13813,6 +13838,7 @@ function renderAccounts(a, p) {
     // one line, First or Make first at its right end (the owner, 10-29)
     const line = el("div", "acc-line");
     row.append(line);
+    if (a.agent === "codex") line.append(el("span", "account-number", String(index + 1)));
     line.append(dot, accountNameButton(p, l.user), planChip(accountPlan({ ...l, agent: a.agent, builtin: a.builtin })));
     if (p && on && several) line.append(keyWeight(p, { name: l.user }, wOf(l), weights, "provider/accountweight", { id: p.id, account: l.user }));
     // its own models (#474), when there is another account to send the rest to
@@ -14044,6 +14070,7 @@ function renderAccounts(a, p) {
     list.append(box);
   }
   const pv = a.agent === "codex" ? providers || {} : {};
+  if (a.agent === "codex" && !web && state?.isolatedCodex) list.prepend(addRow(t("Open the Codex app"), () => api("agents/open", { agent: "codex" }).catch(statusErr), LAUNCH_GLYPH));
   if (pv.codexDaemon) list.append(renderCodexDaemon(pv.codexDaemon));
   if (pv.codexApp) list.append(renderCodexApp(pv.codexApp));
   if (pv.codexProjects) import("./codexprojects.js").then(() => list.append(codexProjectsNote(codexNote, accountAction)), () => {});
@@ -14164,8 +14191,6 @@ async function runImport(agent) {
   }
 }
 
-const importStatus = { added: "Added", updated: "Updated with this sign-in", exists: "Already in magpie", failed: "Not added" };
-
 function renderLoginImport(sub) {
   const box = el("div", "signing import");
   const tt = el("span", "tt");
@@ -14177,79 +14202,20 @@ function renderLoginImport(sub) {
     return box;
   }
   if (signing.state === "imported") {
-    box.append(el("span", "mark", "✓"));
-    tt.append(el("span", "n", t("Import finished")));
-    const rs = el("span", "results");
-    for (const r of signing.results || []) {
-      const row = el("span", "res " + r.status);
-      // a file that held no account is named, not passed over
-      const who = r.user || (r.file && signing.names?.[r.file - 1]) || "";
-      row.append(el("span", "u", who), el("span", "st", t(importStatus[r.status] || r.status)));
-      if (r.error) { row.title = r.error; row.append(el("span", "why", r.error)); }
-      rs.append(row);
-    }
-    tt.append(rs);
-    box.append(tt);
-    const done = el("button", "text", t("Done"));
-    done.onclick = cancelSignIn;
-    // the next batch is one click away, beside the last one's results,
-    // rather than behind Done (#2131: several Antigravity exports in a row)
-    const more = el("button", "text primary", t("Import more…"));
-    more.onclick = () => startImport(sub.agent, signing.accessOnly);
-    box.append(done, more);
+    const flow = signing;
+    import("./accountimport.js").then(({ drawLoginImportResults }) => {
+      if (signing === flow) drawLoginImportResults(box, sub, flow, { el, t, startImport, cancelSignIn });
+    }, statusErr);
     return box;
   }
   box.append(el("span", "mark", "↑"));
   const say = importSay(sub.agent);
   tt.append(el("span", "n", say.title || t("Import {name} accounts", { name: sub.name })), el("span", "s", say.intro));
-  if (say.spent) {
-    const spent = el("span", "s", signing.accessOnly ? say.kept : say.spent);
-    tt.append(spent);
-    if (say.kept) {
-      const [ao, cb] = tick(t("Access token only"), !!signing.accessOnly);
-      ao.classList.add("import-access-only");
-      cb.onchange = () => { signing.accessOnly = cb.checked; spent.textContent = cb.checked ? say.kept : say.spent; };
-      tt.append(ao);
-    }
-  }
-  if (sub.risk) tt.append(el("span", "s", t(sub.riskNote || "Google may suspend an Antigravity account it sees used outside Antigravity. Use one you can afford to lose.")));
-  const area = el("textarea");
-  area.rows = 3;
-  area.spellcheck = false;
-  area.autocomplete = "off";
-  area.placeholder = t("…or paste it here");
-  area.value = signing.text || "";
-  const file = el("input");
-  file.type = "file";
-  file.multiple = true;
-  file.accept = ".json,.txt,application/json,text/plain";
-  file.hidden = true;
-  const names = el("span", "fname", signing.files.map((f) => f.name).join(", "));
-  const go = el("button", "text primary", t("Import"));
-  const ready = () => { go.disabled = !(signing.files.length || signing.text.trim()); };
-  area.oninput = () => { signing.text = area.value; ready(); };
-  file.onchange = async () => {
-    const picked = [];
-    for (const f of file.files) {
-      if (f.size > 4 << 20) { status(t("{name} is too big to be an export", { name: f.name }), "err"); continue; }
-      picked.push({ name: f.name, text: await f.text() });
-    }
-    signing.files = picked;
-    names.textContent = picked.map((f) => f.name).join(", ");
-    ready();
-  };
-  const pick = el("button", "link", t("Choose files…"));
-  pick.onclick = () => file.click();
-  const acts = el("span", "acts");
-  acts.append(pick, names, file);
-  tt.append(acts, area);
-  if (signing.error) tt.append(el("span", "s why", signing.error));
+  const flow = signing;
   box.append(tt);
-  go.onclick = () => runImport(sub.agent);
-  ready();
-  const close = el("button", "text", t("Cancel"));
-  close.onclick = cancelSignIn;
-  box.append(close, go);
+  import("./accountimport.js").then(({ drawLoginImportInput }) => {
+    if (signing === flow) drawLoginImportInput(box, tt, sub, flow, say, { el, t, tick, status, runImport, cancelSignIn });
+  }, statusErr);
   return box;
 }
 

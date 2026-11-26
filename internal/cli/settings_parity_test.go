@@ -488,6 +488,7 @@ var notYet = map[string]string{
 	"GET /api/icons/{name}":                      W,  // providers.go
 	"GET /api/lanes":                             P,  // providers.go
 	"GET /api/signin/{id}":                       P,  // providers.go
+	"GET /api/signin/workspaces":                 P,  // providers.go
 	"GET /api/upstream":                          P,  // providers.go
 	"POST /api/codex/app/reopen":                 W,  // providers.go
 	"POST /api/codex/daemon/{action}":            P,  // providers.go
@@ -504,6 +505,7 @@ var notYet = map[string]string{
 	"POST /api/signin":                           P,  // providers.go
 	"POST /api/signin/{id}/callback":             P,  // providers.go
 	"POST /api/signin/{id}/cancel":               P,  // providers.go
+	"POST /api/signin/{id}/workspaces":           P,  // providers.go
 	"POST /api/signin/claude-token":              P,  // providers.go
 	"POST /api/signin/import":                    P,  // providers.go
 	"POST /api/signin/export":                    P,  // providers.go

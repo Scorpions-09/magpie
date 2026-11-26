@@ -321,6 +321,33 @@ func TestCodexAppServerStuck(t *testing.T) {
 	}
 }
 
+func TestCodexAppHomeRequiresOwnership(t *testing.T) {
+	userHome := t.TempDir()
+	home := filepath.Join(userHome, ".codex")
+	old := codexAppServerEnv
+	t.Cleanup(func() { codexAppServerEnv = old })
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		err  error
+		want bool
+	}{
+		{name: "Windows process environment unavailable", err: proc.ErrNoEnv},
+		{name: "empty environment"},
+		{name: "explicit home", env: map[string]string{"CODEX_HOME": home}, want: true},
+		{name: "other explicit home", env: map[string]string{"CODEX_HOME": t.TempDir(), "HOME": userHome}},
+		{name: "default home", env: map[string]string{"HOME": userHome}, want: true},
+		{name: "Windows user profile", env: map[string]string{"USERPROFILE": userHome}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codexAppServerEnv = func(context.Context, int, ...string) (map[string]string, error) { return tc.env, tc.err }
+			if got := codexAppHomeIs(context.Background(), 1, home); got != tc.want {
+				t.Errorf("owns the profile = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCodexAppHomeHelper is TestCodexAppServersOnHome's app-server: it
 // waits to be ended (a system binary's environment is kept from ps).
 func TestCodexAppHomeHelper(t *testing.T) {

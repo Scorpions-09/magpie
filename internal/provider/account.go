@@ -1113,6 +1113,7 @@ type codexAuth struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		AccountID    string `json:"account_id"`
+		LoginOwnerID string `json:"login_owner_id"`
 	} `json:"tokens"`
 }
 
@@ -1129,8 +1130,8 @@ func codexAccount(home string) (Provider, bool) {
 		return Provider{}, false
 	}
 	id := jwtClaims(a.Tokens.IDToken)
-	acct := &Account{Agent: "codex", Stream: true,
-		User: codexUser(id), Plan: claimString(id, "https://api.openai.com/auth", "chatgpt_plan_type")}
+	plan := codexAuthPlan(a, id)
+	acct := &Account{Agent: "codex", Stream: true, User: codexUserWithPlan(id, plan), Plan: plan}
 	if acct.User == "" {
 		acct.User = "ChatGPT"
 	} else {
@@ -1205,7 +1206,13 @@ func codexTokenRenewing(ctx context.Context, dir, stale string) (tok, accountID 
 	b, st, err := readCodexLogin(dir, stale != "")
 	var a codexAuth
 	if err == nil && json.Unmarshal(b, &a) == nil && a.Tokens.AccessToken != "" {
-		if stale != "" {
+		if codexManagedWorkspaceOwner(a) != "" && !codexWorkspaceToken(a.Tokens.AccessToken, codexGrantUser(a), codexAccountID(a)) {
+			// A prior refresh can have selected another workspace upstream.
+			// Re-scope the fresh token without spending the refresh token.
+			if codexWorkspaceFresh(a.Tokens.AccessToken) {
+				return scopeLiveCodexWorkspace(ctx, b, st, a)
+			}
+		} else if stale != "" {
 			if a.Tokens.AccessToken != stale {
 				return a.Tokens.AccessToken, codexAccountID(a), nil
 			}
@@ -1246,6 +1253,20 @@ func codexTokenRenewing(ctx context.Context, dir, stale string) (tok, accountID 
 		return "", "", err
 	}
 	forgetCodexSignInGone(dir)
+	owner := codexManagedWorkspaceOwner(a)
+	var scopeErr error
+	if owner != "" && !codexWorkspaceToken(tok, codexGrantUser(a), accountID) {
+		// A background exchange may have changed the workspace OAuth
+		// refresh selects. Always keep the new grant, but never write
+		// another workspace's access token into the live Codex account.
+		tok, scopeErr = exchangeCodexWorkspace(context.WithoutCancel(ctx), tok, codexGrantUser(a), accountID)
+		tokens, _ := raw["tokens"].(map[string]any)
+		if scopeErr == nil {
+			tokens["access_token"] = tok
+		} else {
+			tokens["access_token"] = a.Tokens.AccessToken
+		}
+	}
 	// keep every other field as Codex wrote it. auth.json is the user's
 	// own sign-in, which Codex CLI and the Codex app read: written beside
 	// it, flushed and renamed in, never truncated in place, so a machine
@@ -1261,9 +1282,10 @@ func codexTokenRenewing(ctx context.Context, dir, stale string) (tok, accountID 
 	// refreshed one over it switched Codex back to the account it had
 	// been switched off (darwish4021 on Discord: "switched my account").
 	// The fresh access token still serves the request in hand.
-	if now, _, err := readCodexLogin(dir, true); err != nil || !sameRefreshToken(now, a.Tokens.RefreshToken) {
+	if now, _, err := readCodexLogin(dir, true); err != nil || !sameRefreshToken(now, a.Tokens.RefreshToken) ||
+		owner != "" && codexWorkspacesApart(now, b) {
 		log.Printf("codex: the sign-in in %s changed while %s was being refreshed; the refresh is not written over it", dir, accountID)
-		return tok, accountID, nil
+		return tok, accountID, scopeErr
 	}
 	if out, err := json.MarshalIndent(raw, "", "  "); err == nil {
 		if werr := st.write(out); werr != nil {
@@ -1272,9 +1294,12 @@ func codexTokenRenewing(ctx context.Context, dir, stale string) (tok, accountID 
 				where = "the keychain item " + codexKeychainService
 			}
 			log.Printf("codex: the refreshed sign-in didn't reach %s: %v", where, werr)
+			if owner != "" {
+				return "", "", werr
+			}
 		}
 	}
-	return tok, accountID, nil
+	return tok, accountID, scopeErr
 }
 
 // codexAccountID is the ChatGPT account a sign-in's requests name.

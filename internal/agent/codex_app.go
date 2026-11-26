@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
@@ -186,4 +188,73 @@ func OpenCodexApp(ctx context.Context) error {
 		}
 	}
 	return errors.New("the Codex app is not installed here")
+}
+
+// OpenCodexAppProfile opens the official Windows app on the Codex home
+// this portable magpie manages. AppX activation cannot pass a profile.
+func OpenCodexAppProfile(home string) error {
+	exe := codexWindowsAppFile(codexWinApp.winExe)
+	if exe == "" {
+		return errors.New("the Windows Codex app is not installed here")
+	}
+	a, err := Find("codex")
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Clean(a.Path), filepath.Join(home, "config.toml")) {
+		return errors.New("the detected Codex configuration is outside the isolated profile")
+	}
+	if err := connectCodexApp(a); err != nil {
+		return err
+	}
+	cmd := codexAppProfileCommand(exe, home)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go cmd.Wait()
+	return nil
+}
+
+var codexWindowsPackageRoot = windowsStorePackageRoot
+
+func codexWindowsAppFile(relative string) string {
+	app := desktopApps["codex"]
+	packages := windowsStorePackages()
+	version := storeAppVersion(packages, app.store, app.publisher)
+	for _, pkg := range packages {
+		if version == "" || !strings.HasPrefix(pkg, app.store+"_"+version+"_") || !strings.HasSuffix(pkg, "__"+app.publisher) {
+			continue
+		}
+		dir := codexWindowsPackageRoot(pkg)
+		if path := filepath.Join(dir, "app", relative); filepath.IsAbs(dir) && isFile(path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func connectCodexApp(a *Agent) error {
+	if err := a.Connect(); err != nil {
+		return err
+	}
+	if drift := a.Drift(); drift != nil && drift.Kind == "unwired" {
+		if _, errs := setAgain([]*Agent{a}); len(errs) != 0 {
+			return joinErrs(errs)
+		}
+	}
+	if !a.Wired() {
+		return errors.New("Codex is not connected to this Magpie instance")
+	}
+	if why := a.Check(); why != "" {
+		return errors.New(why)
+	}
+	return nil
+}
+
+func codexAppProfileCommand(exe, home string) *exec.Cmd {
+	webData := filepath.Join(filepath.Dir(home), "codex-desktop")
+	cmd := proc.Command(exe, "--user-data-dir="+webData)
+	cmd.Dir = filepath.Dir(exe)
+	cmd.Env = append(cmd.Environ(), "CODEX_HOME="+home, "CODEX_SQLITE_HOME="+home)
+	return cmd
 }

@@ -129,6 +129,7 @@ func renewLogins(ctx context.Context, every time.Duration, atOnce int) []Renewal
 		active["claude"] = claudeHeldUser(ls)
 	}
 	out := []Renewal{}
+	groupRenewals := map[string]Renewal{}
 	tried := 0
 	for _, l := range ls {
 		// nor one kept access token only, whose sign-in magpie never renews
@@ -136,6 +137,12 @@ func renewLogins(ctx context.Context, every time.Duration, atOnce int) []Renewal
 			continue
 		}
 		r := Renewal{Agent: l.Agent, User: l.User}
+		owner := codexWorkspaceOwner(l.Auth)
+		if prior, ok := groupRenewals[owner]; ok {
+			r.Renewed, r.Err, r.Lapsed = prior.Renewed, prior.Err, prior.Lapsed
+			out = append(out, r)
+			continue
+		}
 		if every > 0 && (!renewalDue(l, every, time.Now()) || renewWaiting(l.Agent, l.User, time.Now())) || atOnce > 0 && tried >= atOnce {
 			out = append(out, r)
 			continue
@@ -159,6 +166,9 @@ func renewLogins(ctx context.Context, every time.Duration, atOnce int) []Renewal
 			r.Renewed = true
 		}
 		noteRenewal(r)
+		if owner != "" {
+			groupRenewals[owner] = r
+		}
 		out = append(out, r)
 	}
 	return out

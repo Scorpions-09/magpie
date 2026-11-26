@@ -344,6 +344,30 @@ A signed-in account's model list exists only at its vendor (the ChatGPT backend'
 
 ## Runtime path
 
+A new Codex browser sign-in on the Providers page offers the ChatGPT
+workspaces of that login before it saves them. [Workspace discovery and
+import](../../internal/provider/codex_workspace_import.go) use up to three
+isolated Codex app-server workers for the verified workspace switch and
+routing checks. On Windows the workers can use the helper shipped with
+the official Codex app when no standalone executable is found. The
+workers receive the access token. Magpie alone
+keeps the rotating refresh grant and reselects the starting workspace
+once the workers finish. The numbered picker shows progress as checks
+finish and lets each failed workspace be retried on its own. The running
+process keeps the batch when the editor closes, and another window can
+read it from the sign-in API. Explicit cancellation or quitting ends that
+session. Already saved accounts are skipped on another import. If
+membership discovery fails, the picker shows the reason and can add the
+starting workspace.
+
+The records from a batch share a stable login owner and a refresh token.
+[Workspace renewal](../../internal/provider/codex_workspace_token.go)
+serializes rotation under the saved-login lock, updates the grant in the
+group together, and checks the returned access token against the
+workspace and user before using it. If Codex owns that login, renewal goes
+through Codex's store. Each workspace's access token remains scoped to
+its own requests.
+
 1. **Add.** The Providers page adds a key provider through `Add` or `Save`, or an account through `StartSignIn`. An agent signed in on its own is found by `Accounts` with no step from the user.
 2. **Resolve.** The gateway calls `provider.Resolve` or `GroupFor` with the model name, then plans candidates over the provider's keys or accounts.
 3. **Sign.** For each try, `Sign` gives the request its auth. A token about to expire is refreshed first, and the rotated tokens go back to their one holder: the agent's store, or `logins.json` for an account standing behind it.

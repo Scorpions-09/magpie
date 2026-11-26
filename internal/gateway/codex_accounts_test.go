@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -337,6 +338,83 @@ func TestGatewayKeyAccountsHoldCodexOwnModel(t *testing.T) {
 	code, body = post(secrets[1])
 	if code != 200 || len(heads) != 2 {
 		t.Fatalf("a free key: %d %s, %d upstream requests", code, body, len(heads))
+	}
+}
+
+func TestIsolatedCodexResponsesRoutesThroughPool(t *testing.T) {
+	codexSignedIn(t, "spare@example.com")
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil || r.URL.Path != "/backend-api/codex/responses" || modelOf(body) != "gpt-5.5" || r.Header.Get("chatgpt-account-id") != "acct-1" {
+			t.Errorf("unexpected upstream request: %s, model %q, account %q, read error %v", r.URL.Path, modelOf(body), r.Header.Get("chatgpt-account-id"), err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sse(
+			`data: {"type":"response.created","response":{"id":"r1","model":"gpt-5.5"}}`,
+			`data: {"type":"response.output_text.delta","delta":"pong"}`,
+			`data: {"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":7,"output_tokens":1}}}`))
+	}))
+	t.Cleanup(up.Close)
+	was := provider.CodexBase
+	provider.CodexBase = up.URL + "/backend-api/codex"
+	t.Cleanup(func() { provider.CodexBase = was })
+
+	s := New()
+	local := httptest.NewServer(s.Handler())
+	t.Cleanup(local.Close)
+	req, err := http.NewRequest(http.MethodPost, local.URL+"/v1/responses", strings.NewReader(`{"model":"codex/gpt-5.5","input":"ping","stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer magpie-codex")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "codex_cli_rs/0.162.0")
+	res, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil || res.StatusCode != http.StatusOK || !strings.Contains(string(body), "pong") {
+		t.Fatalf("gateway status %d, body %s, read error %v", res.StatusCode, body, err)
+	}
+	if trace := s.Trace(context.Background(), 0, 0).Routes; len(trace) != 1 || !trace[0].Done {
+		t.Fatalf("expected one completed route, got %+v", trace)
+	}
+}
+
+func TestWindowsCodexDesktopTurnAppearsInRouting(t *testing.T) {
+	codexSignedIn(t, "imported@example.com")
+	var tried, models []string
+	usedUp(t, &tried, &models)
+	s := New()
+	local := httptest.NewServer(s.Handler())
+	t.Cleanup(local.Close)
+	req, err := http.NewRequest(http.MethodPost, local.URL+CodexPath+"/responses", strings.NewReader(`{"model":"gpt-5.5","input":"ping","stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer chatgpt-token")
+	req.Header.Set("ChatGPT-Account-ID", "acct-1")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Originator", "Codex Desktop")
+	req.Header.Set("User-Agent", "Codex Desktop/0.162.3 (Windows 10.0.26100; x86_64) unknown")
+	res, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil || res.StatusCode != http.StatusOK || !strings.Contains(string(body), "pong") {
+		t.Fatalf("desktop reply: status %d, body %s, error %v", res.StatusCode, body, err)
+	}
+	if !slices.Equal(tried, []string{"acct-1", "acct-2"}) {
+		t.Fatalf("desktop did not fall back to the imported account: %v", tried)
+	}
+	tr := s.Trace(context.Background(), 0, 0).Routes
+	if len(tr) != 1 || tr[0].Agent != "Codex" || tr[0].Provider != "codex" || !tr[0].Done ||
+		len(tr[0].Tries) != 2 || tr[0].Tries[1].Status != http.StatusOK {
+		t.Fatalf("desktop turn missing from Routing: %+v", tr)
 	}
 }
 

@@ -52,6 +52,9 @@ func init() {
 	}
 	// a Copilot CLI signed in inside a running distro (#723)
 	provider.CopilotWSLDirs = copilotWSLDirs
+	provider.CodexWorkspaceAppExecutable = func() string {
+		return codexWindowsAppFile(filepath.Join("resources", "codex.exe"))
+	}
 	// the Codex app's app-server is restarted when magpie becomes Codex's
 	// provider for its used-up ChatGPT account, and when it stops being it;
 	// and when Codex is connected or disconnected, or its route otherwise

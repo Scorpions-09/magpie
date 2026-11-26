@@ -81,6 +81,46 @@ func TestCodexSignedInRoutesByBaseURL(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopConnectFollowsGateway(t *testing.T) {
+	for _, mode := range []struct {
+		name, auth, config string
+	}{
+		{"ChatGPT", `{"tokens":{"access_token":"x","id_token":"x.e30.x"}}`, "model = \"gpt-5.5\"\n"},
+		{"Magpie provider", "", "model = \"m1\"\n"},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			home, _ := codexHome(t, mode.auth, mode.config)
+			t.Setenv("MAGPIE_ADDR", "127.0.0.1:13426")
+			a := codex(home)
+			if err := a.Connect(); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("MAGPIE_ADDR", "127.0.0.1:15281")
+			if err := connectCodexApp(a); err != nil {
+				t.Fatal(err)
+			}
+			const current = "http://127.0.0.1:15281"
+			cfg, err := os.ReadFile(a.Path)
+			if err != nil || strings.Contains(string(cfg), "13426") {
+				t.Fatalf("old gateway remains in config: %s (%v)", cfg, err)
+			}
+			if mode.auth != "" {
+				if got, _ := edit.GetTOMLTop(a.Path, "openai_base_url"); got != current+"/backend-api/codex" {
+					t.Fatalf("ChatGPT endpoint = %q", got)
+				}
+				if got, _ := edit.GetTOMLTop(a.Path, "model"); got != "gpt-5.5" {
+					t.Fatalf("ChatGPT model changed to %q", got)
+				}
+			} else {
+				p, _ := edit.GetTOMLTable(a.Path, "model_providers.magpie")
+				if p["base_url"] != current+"/v1" {
+					t.Fatalf("Magpie provider endpoint = %q", p["base_url"])
+				}
+			}
+		})
+	}
+}
+
 // A magpie set up as a provider of Codex's, from before, moves to the base
 // URL the next time a magpie model is picked, and its table stays: threads
 // started on it name it, and without it Codex can't open them (#129).

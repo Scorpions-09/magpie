@@ -28,6 +28,18 @@ func CodexHomeIn(home string) string {
 	return filepath.Join(home, ".codex")
 }
 
+// IsolatedCodexHome is the explicit Codex profile inside this portable
+// instance's data directory, or empty when it uses the user's Codex.
+func IsolatedCodexHome() string {
+	if dir := Portable(); dir != "" {
+		home := Getenv("CODEX_HOME")
+		if home != "" && sameAny(home, []string{filepath.Join(dir, "codex")}) {
+			return home
+		}
+	}
+	return ""
+}
+
 // CodexHomes are every Codex folder of the user's on this computer:
 // CodexHome first, then the others. Codex keeps one ChatGPT sign-in a
 // folder (codex-rs login/src/auth/storage.rs: auth.json, or the keychain

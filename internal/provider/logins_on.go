@@ -251,6 +251,9 @@ func renewSaved(ctx context.Context, agent, user string, force bool, stale strin
 	if l == nil {
 		return "", "", fmt.Errorf("no saved %s account %q", agent, user)
 	}
+	if owner := codexWorkspaceOwner(l.Auth); agent == "codex" && owner != "" {
+		return renewCodexWorkspace(ctx, *l, owner, force, stale)
+	}
 	if agent == "codex" && heldByCodex(*l) {
 		// the account Codex is signed in to now (switched to since this
 		// was asked for, or the copy kept of it as it was): one sign-in in

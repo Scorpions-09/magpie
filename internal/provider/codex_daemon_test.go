@@ -73,8 +73,8 @@ func TestFindCodexDaemon(t *testing.T) {
 	}
 	ps = append(ps, proc.Process{PID: 20, Args: "/x/codex app-server --managed-daemon"},
 		proc.Process{PID: 30, Args: "/y/codex app-server --managed-daemon"})
-	if got := findCodexDaemon(ps, home); got != 20 {
-		t.Fatalf("no pid file: got %d, want the first, 20", got)
+	if got := findCodexDaemon(ps, home); got != 0 {
+		t.Fatalf("unknown home and no pid file: got %d", got)
 	}
 	// the pid file of this home names the one that is its
 	os.MkdirAll(filepath.Join(home, "app-server-daemon"), 0o700)
@@ -106,7 +106,7 @@ func fakeDaemon(t *testing.T) *int {
 		listProcesses, processCodexHome = old, oldHome
 		DismissCodexDaemon()
 	})
-	processCodexHome = func(int) (string, bool) { return "", false }
+	processCodexHome = func(int) (string, bool) { return codexHome(), true }
 	listProcesses = func(context.Context) ([]proc.Process, error) {
 		switch *pid {
 		case -1:

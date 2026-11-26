@@ -24,7 +24,7 @@ const account = (logins) => ({
 const before = [{ user: "live@example.com", plan: "plus", active: true, on: true }];
 const after = [...before, { user: "cpa@example.com", plan: "pro", on: true }];
 
-function serve(lang, posted) {
+function serve(lang, posted, firstImport) {
   let providers = { providers: [account(before)], presets: [], excluded: [], gateway: { running: true, window: true } };
   const state = { agents: [], profiles: [], settings: { lang, theme: "light" } };
   return async (route) => {
@@ -39,7 +39,7 @@ function serve(lang, posted) {
     if (url.pathname === "/api/signin/s1") return json({ id: "s1", agent: "codex", state: "waiting", url: "https://auth.openai.com/oauth/authorize?x=1" });
     if (url.pathname === "/api/signin/import") {
       posted.push(route.request().postDataJSON());
-      await new Promise((r) => setTimeout(r, 300));
+      if (posted.length === 1) await firstImport;
       providers = { ...providers, providers: [account(after)] };
       return json({ providers, results: [
         { user: "cpa@example.com", status: "added", plan: "pro" },
@@ -63,20 +63,22 @@ const want = {
 for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium", "webkit"])) {
   for (const lang of ["en", "zh"]) {
     test(`${engine} ${lang}: ChatGPT accounts come in from CLIProxyAPI's files`, async (t) => {
-      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: "chromium" }));
+      const browser = await (engine === "webkit" ? webkit.launch() : chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "chromium" }));
       const context = await browser.newContext({ viewport: { width: 900, height: 760 }, reducedMotion: "reduce" });
       const page = await context.newPage();
-      page.setDefaultTimeout(5000);
+      page.setDefaultTimeout(10000);
       page.setDefaultNavigationTimeout(60000);
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
       const posted = [];
-      await page.route("**/*", serve(lang, posted));
+      const firstImport = Promise.withResolvers();
+      await page.route("**/*", serve(lang, posted, firstImport.promise));
       // the browser sign-in opens ChatGPT's page in a new window, and the real
       // one is Cloudflare's challenge: in Chromium, while it runs, clicks on
       // this page hung past their 5s (#1307). The window gets an empty page
       await context.route((url) => url.hostname !== "magpie.test", (route) => route.fulfill({ contentType: "text/html", body: "" }));
       t.after(async () => {
+        firstImport.resolve();
         if (process.env.ARTIFACT_DIR) {
           await fs.mkdir(process.env.ARTIFACT_DIR, { recursive: true });
           await page.screenshot({ path: path.join(process.env.ARTIFACT_DIR, `${engine}-${lang}-login-import.png`), fullPage: true });
@@ -128,6 +130,7 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await page.locator(".signing.import button.primary").click();
       await page.locator(".signing.import .spinner").waitFor();
       assert.equal(await page.locator(".signing.import .tt .n").textContent(), say.checking);
+      firstImport.resolve();
       await page.locator(".signing.import .results").waitFor();
       assert.deepEqual(posted, [{ agent: "codex", files: [cpa] }]);
       const done = await page.locator(".signing.import .res .st").allTextContents();

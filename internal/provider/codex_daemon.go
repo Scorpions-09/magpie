@@ -114,16 +114,22 @@ func parsePIDFile(b []byte) (int, bool) {
 
 // findCodexDaemon picks, among the running processes, Codex's managed
 // app-server for home: 0 when none runs. One started for another
-// CODEX_HOME is left out where that can be read; where it can't, the one
-// home's pid file names is taken, else the first.
+// CODEX_HOME is left out. A daemon whose environment cannot identify its
+// home must be named by the requested home's PID file.
 func findCodexDaemon(ps []proc.Process, home string) int {
 	var ids []int
+	var matched int
 	for _, p := range ps {
 		if !isManagedDaemon(p.Args) {
 			continue
 		}
-		if h, ok := processCodexHome(p.PID); ok && h != "" && filepath.Clean(h) != filepath.Clean(home) {
-			continue
+		if h, ok := processCodexHome(p.PID); ok && h != "" {
+			if !sameDir(h, home) {
+				continue
+			}
+			if matched == 0 {
+				matched = p.PID
+			}
 		}
 		ids = append(ids, p.PID)
 	}
@@ -135,7 +141,7 @@ func findCodexDaemon(ps []proc.Process, home string) int {
 			return id
 		}
 	}
-	return ids[0]
+	return matched
 }
 
 // codexDaemonLeft is the app-server that was running when Codex's account

@@ -326,11 +326,12 @@ type profileLibraryJSON struct {
 }
 
 type stateJSON struct {
-	Agents   []agentJSON   `json:"agents"`
-	Clients  []clientJSON  `json:"clients"` // who a request may come from, by id
-	Profiles []profileJSON `json:"profiles"`
-	Catalog  string        `json:"catalog"`
-	Notice   string        `json:"notice,omitempty"` // advice after a change, e.g. "restart Codex"
+	IsolatedCodex bool          `json:"isolatedCodex,omitempty"`
+	Agents        []agentJSON   `json:"agents"`
+	Clients       []clientJSON  `json:"clients"` // who a request may come from, by id
+	Profiles      []profileJSON `json:"profiles"`
+	Catalog       string        `json:"catalog"`
+	Notice        string        `json:"notice,omitempty"` // advice after a change, e.g. "restart Codex"
 	// Connected is how the 「接入」 switch chose the model the agent starts
 	// on, in the answer to agents/connect (agent.Connection)
 	Connected *agent.Connection `json:"connected,omitempty"`
@@ -3430,6 +3431,7 @@ func stateSettings(s settings.Settings) settings.Settings {
 
 func state() stateJSON {
 	s := stateJSON{Agents: []agentJSON{}, Profiles: []profileJSON{}, Catalog: catalog.Source(), Settings: settings.Shared()} // only encoded, never changed
+	s.IsolatedCodex = !webPage.Load() && isolatedCodexHome() != "" && codexOpensApp()
 	s.Settings = stateSettings(s.Settings)
 	s.JSRoutings = middleware.Routings()
 	// state() is asked for after nearly every click, so the rate — a

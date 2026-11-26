@@ -411,6 +411,29 @@ func sessionRoutes(mux *http.ServeMux, w Windows) {
 			fail(rw, err)
 			return
 		}
+		if home := isolatedCodexHome(); in.Agent == "codex" && home != "" {
+			desktop := !in.Terminal && codexOpensApp()
+			if isWeb(w) {
+				fail(rw, errors.New("opening Codex is only for the desktop app"))
+				return
+			}
+			var err error
+			if desktop {
+				if served.Load() == nil {
+					fail(rw, errors.New("start this Magpie instance's gateway before opening Codex"))
+					return
+				}
+				err = codexAppProfileOpener(home)
+			} else {
+				err = openIsolatedCodex(home)
+			}
+			if err != nil {
+				fail(rw, err)
+				return
+			}
+			rw.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if in.Agent == "codex" && !in.Terminal && codexOpensApp() {
 			if isWeb(w) {
 				fail(rw, errors.New("opening an app is only for the desktop app"))
@@ -1289,6 +1312,8 @@ func agentCommand(a *agent.Agent) string {
 func codexOpensApp() bool {
 	return settings.Shared().CodexOpen != "terminal" && codexAppInstalled()
 }
+
+var codexAppProfileOpener = agent.OpenCodexAppProfile
 
 // codexAppInstalled and codexAppOpener are the agent package's, vars so a
 // test doesn't open a real app.

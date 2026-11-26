@@ -649,8 +649,12 @@ func codexLiveName(user string, auth json.RawMessage) string {
 // and for a seat in a workspace the plan too, so it reads apart from a
 // personal plan of the same email.
 func codexUser(id map[string]any) string {
+	return codexUserWithPlan(id, claimString(id, codexAuthClaims, "chatgpt_plan_type"))
+}
+
+func codexUserWithPlan(id map[string]any, plan string) string {
 	email := claimString(id, "email")
-	switch plan := claimString(id, "https://api.openai.com/auth", "chatgpt_plan_type"); plan {
+	switch plan {
 	case "team", "business", "enterprise", "edu":
 		if email != "" {
 			return email + " · " + strings.ToUpper(plan[:1]) + plan[1:]
@@ -955,11 +959,12 @@ func codexLoginIn(home string) (savedLogin, bool) {
 			return [2]string{}
 		}
 		id := jwtClaims(a.Tokens.IDToken)
-		user := codexUser(id)
+		plan := codexAuthPlan(a, id)
+		user := codexUserWithPlan(id, plan)
 		if user == "" {
 			user = a.Tokens.AccountID
 		}
-		return [2]string{user, claimString(id, "https://api.openai.com/auth", "chatgpt_plan_type")}
+		return [2]string{user, plan}
 	})
 	user := w[0]
 	if user == "" {
@@ -1610,6 +1615,18 @@ func switchSavedLogin(agent, user string) (from string, _ error) {
 		forgetCodexKeychain()
 	}
 	if live, ok := liveLogin(agent); ok {
+		if owner := codexWorkspaceOwner(live.Auth); agent == "codex" && owner != "" {
+			var current codexAuth
+			if err := json.Unmarshal(live.Auth, &current); err != nil {
+				return "", err
+			}
+			if err := syncCodexWorkspaceRows(ls, owner, current); err != nil {
+				return "", err
+			}
+			if codexWorkspaceOwner(want.Auth) == owner {
+				want.Auth = target.Auth
+			}
+		}
 		if strings.EqualFold(live.User, want.User) {
 			if tokenFrom == "" {
 				return "", nil

@@ -263,23 +263,27 @@ func isCodexAppOwnServer(args string) bool {
 	return true
 }
 
-// codexAppHomeIs is whether app-server pid runs on Codex home home: its
-// CODEX_HOME, else its HOME's .codex. A system that doesn't tell
-// (Windows) counts as yes: one Codex home is the rule there.
+// codexAppHomeIs requires a confirmed Codex home before an app-server
+// can be stopped. Windows does not expose the environment here.
 func codexAppHomeIs(ctx context.Context, pid int, home string) bool {
-	env, err := proc.EnvOf(ctx, pid, "CODEX_HOME", "HOME")
-	if errors.Is(err, proc.ErrNoEnv) {
-		return true
-	}
+	env, err := codexAppServerEnv(ctx, pid, "CODEX_HOME", "HOME", "USERPROFILE")
 	if err != nil {
 		return false
 	}
 	h := env["CODEX_HOME"]
-	if h == "" && env["HOME"] != "" {
-		h = filepath.Join(env["HOME"], ".codex")
+	if h == "" {
+		userHome := env["HOME"]
+		if userHome == "" {
+			userHome = env["USERPROFILE"]
+		}
+		if userHome != "" {
+			h = filepath.Join(userHome, ".codex")
+		}
 	}
 	return h != "" && sameDir(h, home)
 }
+
+var codexAppServerEnv = proc.EnvOf
 
 // sameDir is whether a and b name one folder, through links too.
 func sameDir(a, b string) bool {

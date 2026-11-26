@@ -53,6 +53,19 @@ something else shows up as drift.
 
 ## Runtime path
 
+On Windows, a portable instance with `CODEX_HOME` set to its own `codex`
+directory offers **Open the Codex app** in the Codex account list when the
+app is installed and selected in settings. It connects Codex through the
+usual agent setup and reapplies wiring if the configuration names an old
+gateway. The [launcher](../../internal/agent/codex_app.go) opens the
+registered Windows Codex app with that instance's Codex home and its own
+desktop data directory. Requests use the gateway address written by
+Connect and appear on that gateway's Routing page. The explicit terminal
+option uses the [CLI launcher](../../internal/gui/codex_isolated_launch.go)
+without the shared daemon. Desktop app-server restarts require a matching
+Codex home. A managed daemon with an unreadable environment must be
+identified by the requested home's PID file.
+
 1. **Connect.** The Agents page's switch calls `ConnectHow` (`POST /api/agents/{action}/{id}` in [`internal/gui/api.go`](../../internal/gui/api.go)). It stashes the current values (`<id>.connect.was`). It brings back the models used before a switch-off (`reconnect`), or calls `Join` where the agent keeps its own model (Codex signed in with ChatGPT). `reconnect` calls `Join` first too, so a Codex switched off on a routing group comes back joined, as the switch first connected it: put back on the group alone it was beside its sign-in only, and an own model picked on the Agents page took it off magpie (NancyTom18 on X, `TestCodexReconnectStaysJoined`). One that can't join then (a provider of the user's own, magpie API) is connected as at first unless its own model was one of magpie's: its memories' or subagents' model put back alone read as connected while its own model stayed off magpie (#3868, `TestCodexOffAndOnJoinsAgainWithItsHelpersOnMagpie`). Otherwise it picks a model by the order `ConnectHow` documents and sets it through `Apply`.
 2. **Pick.** `Pick` sets a field from the model picker. Picking one of magpie's models on an agent that isn't connected connects it first. Each row of a model picker that a provider served with a timed reply this week says how fast: tokens a second, or the first token's wait when only that was timed (`speedTag` in app.js, from `GET /api/model-speeds`, `modelSpeeds` in [`internal/gui/speeds.go`](../../internal/gui/speeds.go): the usage ledger's mean TTFT and decode speed by `provider/model`, the catalog ref an option carries). Under a search, rows that match equally go fastest first by about how long a 200-token reply takes (`speedRank`), the untimed last, so a model several providers serve lists the fastest one first (axuhere on X). Without a search the rows keep catalog order, grouped by provider. A routing group that always asks the fastest provider is the Speed first strategy ([gateway routing](gateway-routing.md)).
 3. **Notice.** After a change the page shows `Notice` when the agent reads its config only at start-up and needs a restart. A field that is `Live` (`Field.Live`: magpie's own setting, which the gateway reads on each request, Claude Desktop's `subagent_model` and `subagent_effort`) needs no restart, so `POST /api/set` and `magpie <agent> <field> <value>` leave the Notice out after it, unless the pick connected the agent too (`Pick` on an agent not connected). A stopped WSL distro's copy of a field keeps the flag (`asleep`).
